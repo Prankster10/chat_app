@@ -239,18 +239,55 @@ class AuthService {
       final uid = _currentUser?.uid;
       if (uid == null) throw Exception('No authenticated user');
 
-      await _firestore.collection('users').doc(uid).update({
+      // Update Firestore
+      final updateData = <String, dynamic>{
         'displayName': displayName,
-        if (photoUrl != null) 'photoUrl': photoUrl,
         'updatedAt': DateTime.now().toIso8601String(),
-      });
+      };
+      if (photoUrl != null) {
+        updateData['photoUrl'] = photoUrl;
+      }
+      await _firestore.collection('users').doc(uid).update(updateData);
 
+      // Update Realtime Database
       await _realtime.saveUserProfile(userId: uid, email: _currentUser!.email, displayName: displayName, photoUrl: photoUrl);
 
-      _currentUser = AppUser(uid: uid, email: _currentUser!.email, displayName: displayName, createdAt: _currentUser!.createdAt);
+      // Reload user data from Firestore to ensure consistency
+      final updatedDoc = await _firestore.collection('users').doc(uid).get();
+      if (updatedDoc.exists) {
+        _currentUser = AppUser.fromMap(updatedDoc.data() as Map<String, dynamic>, uid);
+      } else {
+        // Fallback if document doesn't exist
+        _currentUser = AppUser(uid: uid, email: _currentUser!.email, displayName: displayName, createdAt: _currentUser!.createdAt);
+      }
       _authStateController.add(_currentUser);
     } catch (e) {
       print('Profile update error: $e');
+      rethrow;
+    }
+  }
+
+  // Change password
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final fbUser = _auth.currentUser;
+      if (fbUser == null) throw Exception('No authenticated user');
+      if (newPassword.length < 6) throw Exception('New password must be at least 6 characters');
+
+      // Re-authenticate user with current password
+      final credential = fb_auth.EmailAuthProvider.credential(
+        email: fbUser.email!,
+        password: currentPassword,
+      );
+      await fbUser.reauthenticateWithCredential(credential);
+
+      // Update password
+      await fbUser.updatePassword(newPassword);
+    } catch (e) {
+      print('Password change error: $e');
       rethrow;
     }
   }

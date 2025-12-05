@@ -11,6 +11,8 @@ class ChatModel {
   final DateTime lastMessageTime;
   final bool isPrivate;
   final Map<String, String>? memberDisplayNames;
+  final Map<String, int>? unreadCount;
+  final Map<String, DateTime>? lastReadTimestamp;
 
   ChatModel({
     required this.id,
@@ -24,6 +26,8 @@ class ChatModel {
     required this.lastMessageTime,
     required this.isPrivate,
     this.memberDisplayNames,
+    this.unreadCount,
+    this.lastReadTimestamp,
   });
 
   Map<String, dynamic> toMap() {
@@ -39,6 +43,8 @@ class ChatModel {
       'lastMessageTime': lastMessageTime.toIso8601String(),
       'isPrivate': isPrivate,
       'memberDisplayNames': memberDisplayNames,
+      'unreadCount': unreadCount?.map((k, v) => MapEntry(k, v)),
+      'lastReadTimestamp': lastReadTimestamp?.map((k, v) => MapEntry(k, v.toIso8601String())),
     };
   }
 
@@ -51,6 +57,22 @@ class ChatModel {
         if (v is Timestamp) return v.toDate();
       } catch (_) {}
       return DateTime.now();
+    }
+
+    Map<String, int>? parseUnreadCount(dynamic v) {
+      if (v == null) return null;
+      if (v is Map) {
+        return v.map((k, val) => MapEntry(k.toString(), (val is int) ? val : (val is num) ? val.toInt() : 0));
+      }
+      return null;
+    }
+
+    Map<String, DateTime>? parseLastReadTimestamp(dynamic v) {
+      if (v == null) return null;
+      if (v is Map) {
+        return v.map((k, val) => MapEntry(k.toString(), parseDate(val)));
+      }
+      return null;
     }
 
     return ChatModel(
@@ -67,6 +89,8 @@ class ChatModel {
       memberDisplayNames: (map['memberDisplayNames'] is Map)
           ? Map<String, String>.from(map['memberDisplayNames'])
           : null,
+      unreadCount: parseUnreadCount(map['unreadCount']),
+      lastReadTimestamp: parseLastReadTimestamp(map['lastReadTimestamp']),
     );
   }
 
@@ -82,6 +106,8 @@ class ChatModel {
     DateTime? lastMessageTime,
     bool? isPrivate,
     Map<String, String>? memberDisplayNames,
+    Map<String, int>? unreadCount,
+    Map<String, DateTime>? lastReadTimestamp,
   }) {
     return ChatModel(
       id: id ?? this.id,
@@ -95,6 +121,8 @@ class ChatModel {
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
       isPrivate: isPrivate ?? this.isPrivate,
       memberDisplayNames: memberDisplayNames ?? this.memberDisplayNames,
+      unreadCount: unreadCount ?? this.unreadCount,
+      lastReadTimestamp: lastReadTimestamp ?? this.lastReadTimestamp,
     );
   }
 }

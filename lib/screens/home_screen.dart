@@ -26,12 +26,14 @@ class _HomeScreenState extends State<HomeScreen> {
     _firestoreService = context.read<FirestoreService>();
     _realtimeService = context.read<RealtimeDatabaseService>();
 
-    // Set user online
+    // Set user online when home screen loads
     if (_authService.userId != null) {
       _realtimeService.setUserOnline(
         _authService.userId!,
         _authService.currentUser?.displayName ?? 'Anonymous',
-      );
+      ).catchError((e) {
+        print('Error setting online in home screen: $e');
+      });
     }
   }
 
@@ -88,6 +90,12 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Chats'),
         centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.person),
+          onPressed: () {
+            Navigator.pushNamed(context, '/profile');
+          },
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -138,8 +146,31 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(
-            child: Text('No chats yet. Start a conversation!'),
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.chat_bubble_outline,
+                  size: 80,
+                  color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No chats yet',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: Theme.of(context).textTheme.bodyMedium?.color,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Start a conversation!',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).textTheme.bodyMedium?.color?.withOpacity(0.7),
+                  ),
+                ),
+              ],
+            ),
           );
         }
 
@@ -148,34 +179,137 @@ class _HomeScreenState extends State<HomeScreen> {
             .map((doc) => ChatModel.fromMap(doc.data() as Map<String, dynamic>))
             .toList();
 
+        // Sort by lastMessageTime descending (fallback if Firestore ordering doesn't work)
+        chats.sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
+
         return ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 8),
           itemCount: chats.length,
           itemBuilder: (context, index) {
             final chat = chats[index];
-            return ListTile(
-              title: Text(chat.name),
-              // If private, show other participant's name using memberDisplayNames
-              subtitle: Text(
-                chat.lastMessage,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              leading: CircleAvatar(child: Text(_chatTitleForViewer(chat).substring(0,1).toUpperCase())),
-              trailing: Text(
-                _formatTime(chat.lastMessageTime),
-                style: const TextStyle(fontSize: 12),
-              ),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ChatScreen(
-                      chatId: docs[index].id,
-                      chatName: _chatTitleForViewer(chat),
-                    ),
+            final unreadCount = chat.unreadCount?[uid] ?? 0;
+            final chatTitle = _chatTitleForViewer(chat);
+            
+            return TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.0, end: 1.0),
+              duration: Duration(milliseconds: 300 + (index * 50)),
+              curve: Curves.easeOut,
+              builder: (context, value, child) {
+                return Opacity(
+                  opacity: value,
+                  child: Transform.translate(
+                    offset: Offset(0, 20 * (1 - value)),
+                    child: child,
                   ),
                 );
               },
+              child: Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: InkWell(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ChatScreen(
+                          chatId: docs[index].id,
+                          chatName: chatTitle,
+                        ),
+                      ),
+                    );
+                  },
+                  onLongPress: () {
+                    _showDeleteChatDialog(context, docs[index].id, chatTitle);
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Row(
+                      children: [
+                        Stack(
+                          children: [
+                            CircleAvatar(
+                              radius: 28,
+                              backgroundColor: Theme.of(context).colorScheme.primary,
+                              child: Text(
+                                chatTitle.substring(0, 1).toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      chatTitle,
+                                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                        fontWeight: unreadCount > 0 
+                                            ? FontWeight.bold 
+                                            : FontWeight.normal,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _formatTime(chat.lastMessageTime),
+                                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.6),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      chat.lastMessage,
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: Theme.of(context).textTheme.bodyMedium?.color?.withOpacity(0.7),
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (unreadCount > 0) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        unreadCount > 99 ? '99+' : unreadCount.toString(),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             );
           },
         );
@@ -195,7 +329,25 @@ class _HomeScreenState extends State<HomeScreen> {
           return Center(child: Text('Error loading users: ${usersSnap.error}'));
         }
         if (!usersSnap.hasData || usersSnap.data!.docs.isEmpty) {
-          return const Center(child: Text('No users found'));
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.people_outline,
+                  size: 80,
+                  color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No users found',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: Theme.of(context).textTheme.bodyMedium?.color,
+                  ),
+                ),
+              ],
+            ),
+          );
         }
 
         final userDocs = usersSnap.data!.docs.where((d) => d.id != _authService.userId).toList();
@@ -210,6 +362,7 @@ class _HomeScreenState extends State<HomeScreen> {
             }
 
             return ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
               itemCount: userDocs.length,
               itemBuilder: (context, index) {
                 final userDoc = userDocs[index];
@@ -218,42 +371,131 @@ class _HomeScreenState extends State<HomeScreen> {
                 final isOnline = (presenceData != null && (presenceData['online'] == true));
                 final displayName = userData['displayName'] ?? presenceData?['displayName'] ?? 'Unknown';
 
-                return ListTile(
-                  title: Text(displayName),
-                  subtitle: Text(
-                    isOnline ? 'Online' : 'Offline',
-                    style: TextStyle(color: isOnline ? Colors.green : Colors.grey),
-                  ),
-                  leading: CircleAvatar(
-                    backgroundColor: isOnline ? Colors.green : Colors.grey,
-                    child: const Icon(Icons.person, color: Colors.white),
-                  ),
-                  onTap: () async {
-                    try {
-                      final chatId = await _firestoreService.createPrivateChatTransaction(
-                        user1Id: _authService.userId!,
-                        user2Id: userDoc.id,
-                        user1Name: _authService.currentUser?.displayName ?? 'Anonymous',
-                        user2Name: displayName,
-                      );
-
-                      if (mounted) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => ChatScreen(
-                              chatId: chatId,
-                              chatName: displayName,
-                            ),
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Error: $e')),
-                      );
-                    }
+                return TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0.0, end: 1.0),
+                  duration: Duration(milliseconds: 300 + (index * 50)),
+                  curve: Curves.easeOut,
+                  builder: (context, value, child) {
+                    return Opacity(
+                      opacity: value,
+                      child: Transform.translate(
+                        offset: Offset(0, 20 * (1 - value)),
+                        child: child,
+                      ),
+                    );
                   },
+                  child: Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    child: InkWell(
+                      onTap: () async {
+                        try {
+                          final chatId = await _firestoreService.createPrivateChatTransaction(
+                            user1Id: _authService.userId!,
+                            user2Id: userDoc.id,
+                            user1Name: _authService.currentUser?.displayName ?? 'Anonymous',
+                            user2Name: displayName,
+                          );
+
+                          if (mounted) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ChatScreen(
+                                  chatId: chatId,
+                                  chatName: displayName,
+                                ),
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Error: $e')),
+                          );
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Row(
+                          children: [
+                            Stack(
+                              children: [
+                                CircleAvatar(
+                                  radius: 28,
+                                  backgroundColor: isOnline 
+                                      ? Colors.green 
+                                      : Theme.of(context).colorScheme.surfaceVariant,
+                                  child: Text(
+                                    displayName.substring(0, 1).toUpperCase(),
+                                    style: TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold,
+                                      color: isOnline 
+                                          ? Colors.white 
+                                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                                if (isOnline)
+                                  Positioned(
+                                    right: 0,
+                                    bottom: 0,
+                                    child: Container(
+                                      width: 16,
+                                      height: 16,
+                                      decoration: BoxDecoration(
+                                        color: Colors.green,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Theme.of(context).scaffoldBackgroundColor,
+                                          width: 2,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    displayName,
+                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 8,
+                                        height: 8,
+                                        decoration: BoxDecoration(
+                                          color: isOnline ? Colors.green : Colors.grey,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        isOnline ? 'Online' : 'Offline',
+                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          color: isOnline 
+                                              ? Colors.green 
+                                              : Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.6),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 );
               },
             );
@@ -282,6 +524,43 @@ class _HomeScreenState extends State<HomeScreen> {
     if (uid == null) return chat.name;
     final map = chat.memberDisplayNames ?? {};
     return map[uid] ?? chat.name;
+  }
+
+  void _showDeleteChatDialog(BuildContext context, String chatId, String chatName) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Chat'),
+        content: Text('Are you sure you want to delete "$chatName"? This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                await _firestoreService.deleteChat(chatId);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Chat deleted successfully')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error deleting chat: $e')),
+                  );
+                }
+              }
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
   }
 }
 

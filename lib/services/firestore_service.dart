@@ -5,6 +5,9 @@ import '../models/chat_model.dart';
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  // Expose firestore instance for batch operations
+  FirebaseFirestore get firestore => _firestore;
+
   // Collection references
   CollectionReference get chatsCollection => _firestore.collection('chats');
   CollectionReference get messagesCollection => _firestore.collection('messages');
@@ -27,11 +30,18 @@ class FirestoreService {
 
   // Get all chats for a user
   Stream<QuerySnapshot> getUserChatsStream(String userId) {
-    // Avoid requiring a composite index by omitting orderBy for now.
-    // You can re-add orderBy('lastMessageTime', descending: true) after creating the index.
-    return chatsCollection
-      .where('members', arrayContains: userId)
-      .snapshots();
+    // Try to order by lastMessageTime, but if composite index doesn't exist, sort in UI
+    try {
+      return chatsCollection
+        .where('members', arrayContains: userId)
+        .orderBy('lastMessageTime', descending: true)
+        .snapshots();
+    } catch (e) {
+      // Fallback if composite index doesn't exist - will sort in UI
+      return chatsCollection
+        .where('members', arrayContains: userId)
+        .snapshots();
+    }
   }
 
   // Get chat by ID
@@ -74,6 +84,7 @@ class FirestoreService {
   Future<String> sendMessage({
     required String chatId,
     required MessageModel message,
+    String? senderId,
   }) async {
     try {
       // Add message to messages collection
@@ -86,10 +97,29 @@ class FirestoreService {
             'timestamp': FieldValue.serverTimestamp(),
           });
 
-      // Update chat's last message
+      // Get chat to find all members
+      final chatDoc = await chatsCollection.doc(chatId).get();
+      final chatData = chatDoc.data() as Map<String, dynamic>?;
+      final members = (chatData?['members'] as List?)?.cast<String>() ?? [];
+      final existingUnreadCount = (chatData?['unreadCount'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+
+      // Update unread count for all members except sender
+      Map<String, dynamic> unreadUpdate = {};
+      if (senderId != null) {
+        for (String memberId in members) {
+          if (memberId != senderId) {
+            // Initialize to 0 if doesn't exist, then increment
+            final currentCount = existingUnreadCount[memberId] is int ? existingUnreadCount[memberId] as int : 0;
+            unreadUpdate['unreadCount.$memberId'] = currentCount + 1;
+          }
+        }
+      }
+
+      // Update chat's last message and unread counts
       await updateChat(chatId, {
         'lastMessage': message.content,
         'lastMessageTime': FieldValue.serverTimestamp(),
+        ...unreadUpdate,
       });
 
       return docRef.id;
@@ -148,6 +178,44 @@ class FirestoreService {
       });
     } catch (e) {
       print('Error marking message as read: $e');
+      rethrow;
+    }
+  }
+
+  // Mark all messages in chat as read and reset unread count
+  Future<void> markChatAsRead(String chatId, String userId) async {
+    try {
+      // Reset unread count for this user
+      await updateChat(chatId, {
+        'unreadCount.$userId': 0,
+        'lastReadTimestamp.$userId': FieldValue.serverTimestamp(),
+      });
+
+      // Get all messages that haven't been read by this user
+      final allMessages = await messagesCollection
+          .doc(chatId)
+          .collection('messages')
+          .get();
+
+      final batch = _firestore.batch();
+      int updateCount = 0;
+      for (var doc in allMessages.docs) {
+        final data = doc.data();
+        final readBy = List<String>.from(data['readBy'] ?? []);
+        if (!readBy.contains(userId)) {
+          batch.update(doc.reference, {
+            'readBy': FieldValue.arrayUnion([userId])
+          });
+          updateCount++;
+        }
+      }
+      
+      // Only commit if there are updates to make
+      if (updateCount > 0) {
+        await batch.commit();
+      }
+    } catch (e) {
+      print('Error marking chat as read: $e');
       rethrow;
     }
   }

@@ -17,7 +17,10 @@ service cloud.firestore {
         // do not allow changing uid (if provided it must match)
         && ( (request.resource.data.uid is string && request.resource.data.uid == resource.data.uid) || !(request.resource.data.uid is string) )
         // if email is provided in the update it must not change ownership
-        && ( (request.resource.data.email is string && request.resource.data.email == resource.data.email) || !(request.resource.data.email is string) );
+        && ( (request.resource.data.email is string && request.resource.data.email == resource.data.email) || !(request.resource.data.email is string) )
+        // allow updating displayName and photoUrl
+        && (request.resource.data.displayName is string || !('displayName' in request.resource.data))
+        && (request.resource.data.photoUrl is string || request.resource.data.photoUrl == null || !('photoUrl' in request.resource.data));
 
       allow delete: if request.auth != null && request.auth.uid == userId;
     }
@@ -35,7 +38,11 @@ service cloud.firestore {
 
       // Allow members to read/update/delete. To quickly unblock, allow any authenticated read.
       allow read: if request.auth != null;
-      allow update, delete: if resource.data.members is list && request.auth != null && request.auth.uid in resource.data.members;
+      allow update: if resource.data.members is list && request.auth != null && request.auth.uid in resource.data.members
+        // allow updating unreadCount and lastReadTimestamp fields
+        && (request.resource.data.unreadCount is map || !('unreadCount' in request.resource.data))
+        && (request.resource.data.lastReadTimestamp is map || !('lastReadTimestamp' in request.resource.data));
+      allow delete: if resource.data.members is list && request.auth != null && request.auth.uid in resource.data.members;
 
       // Messages subcollection under chats/{chatId}/messages/{messageId}
       match /messages/{messageId} {
@@ -51,9 +58,17 @@ service cloud.firestore {
           && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members);
 
         // Allow edits only by original sender and do not allow changing senderUid
+        // Also allow chat members to update readBy array
         allow update: if request.auth != null
-          && request.auth.uid == resource.data.senderUid
-          && request.resource.data.senderUid == resource.data.senderUid;
+          && (
+            // Original sender can update their message
+            (request.auth.uid == resource.data.senderUid && request.resource.data.senderUid == resource.data.senderUid)
+            ||
+            // Chat members can update readBy array
+            (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members
+              && request.resource.data.readBy is list
+              && resource.data.readBy is list)
+          );
 
         // Only message sender can delete their message
         allow delete: if request.auth != null && request.auth.uid == resource.data.senderUid;
@@ -74,8 +89,15 @@ service cloud.firestore {
           && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members);
 
         allow update: if request.auth != null
-          && request.auth.uid == resource.data.senderUid
-          && request.resource.data.senderUid == resource.data.senderUid;
+          && (
+            // Original sender can update their message
+            (request.auth.uid == resource.data.senderUid && request.resource.data.senderUid == resource.data.senderUid)
+            ||
+            // Chat members can update readBy array
+            (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members
+              && request.resource.data.readBy is list
+              && resource.data.readBy is list)
+          );
 
         allow delete: if request.auth != null && request.auth.uid == resource.data.senderUid;
       }
