@@ -27,10 +27,11 @@ class FirestoreService {
 
   // Get all chats for a user
   Stream<QuerySnapshot> getUserChatsStream(String userId) {
+    // Avoid requiring a composite index by omitting orderBy for now.
+    // You can re-add orderBy('lastMessageTime', descending: true) after creating the index.
     return chatsCollection
-        .where('members', arrayContains: userId)
-        .orderBy('lastMessageTime', descending: true)
-        .snapshots();
+      .where('members', arrayContains: userId)
+      .snapshots();
   }
 
   // Get chat by ID
@@ -79,12 +80,16 @@ class FirestoreService {
       DocumentReference docRef = await messagesCollection
           .doc(chatId)
           .collection('messages')
-          .add(message.toMap());
+          .add({
+            ...message.toMap(),
+            // Ensure Firestore Timestamp type for rules and ordering
+            'timestamp': FieldValue.serverTimestamp(),
+          });
 
       // Update chat's last message
       await updateChat(chatId, {
         'lastMessage': message.content,
-        'lastMessageTime': message.timestamp.toIso8601String(),
+        'lastMessageTime': FieldValue.serverTimestamp(),
       });
 
       return docRef.id;
@@ -214,6 +219,11 @@ class FirestoreService {
     }
   }
 
+  // Stream all users
+  Stream<QuerySnapshot> getAllUsersStream() {
+    return usersCollection.snapshots();
+  }
+
   // ====================== TRANSACTION OPERATIONS ======================
 
   // Create private chat (transaction)
@@ -242,9 +252,10 @@ class FirestoreService {
         }
 
         // Create new chat if it doesn't exist
+        // For private chats, store a per-member display name so each user sees the other user's name.
         ChatModel newChat = ChatModel(
           id: '',
-          name: user2Name,
+          name: '', // derived per viewer
           members: [user1Id, user2Id],
           createdBy: user1Id,
           createdAt: DateTime.now(),
@@ -254,10 +265,12 @@ class FirestoreService {
         );
 
         DocumentReference newDocRef = chatsCollection.doc();
-        transaction.set(
-          newDocRef,
-          newChat.copyWith(id: '').toMap(),
-        );
+        final data = newChat.copyWith(id: '').toMap();
+        data['memberDisplayNames'] = {
+          user1Id: user2Name,
+          user2Id: user1Name,
+        };
+        transaction.set(newDocRef, data);
 
         chatId = newDocRef.id;
       });

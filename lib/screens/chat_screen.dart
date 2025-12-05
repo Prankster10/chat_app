@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../models/message_model.dart';
@@ -80,6 +81,12 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.chatName),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.person_add),
+            onPressed: _showAddUserDialog,
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -211,5 +218,67 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String _formatTime(DateTime dateTime) {
     return '${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+
+  void _showAddUserDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final controller = TextEditingController();
+        return AlertDialog(
+          title: const Text('Add user by email'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(hintText: 'Email'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final email = controller.text.trim();
+                if (email.isEmpty) {
+                  return;
+                }
+                try {
+                  // Find user by email in Firestore users collection
+                  final qs = await _firestoreService.usersCollection
+                      .where('email', isEqualTo: email)
+                      .limit(1)
+                      .get();
+                  if (qs.docs.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('User not found')),
+                    );
+                    return;
+                  }
+                  final userDoc = qs.docs.first;
+                  final userId = userDoc.id;
+                  final data = userDoc.data() as Map<String, dynamic>;
+                  final displayName = data['displayName'] ?? 'User';
+
+                  // Add to chat members
+                  await _firestoreService.updateChat(widget.chatId, {
+                    'members': FieldValue.arrayUnion([userId]),
+                  });
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Added $displayName to chat')),
+                  );
+                  Navigator.pop(context);
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error: $e')),
+                  );
+                }
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
   }
 }

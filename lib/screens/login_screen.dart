@@ -38,22 +38,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final authService = context.read<AuthService>();
-      final realtimeService = context.read<RealtimeDatabaseService>();
 
       await authService.loginWithEmailPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
 
-      // Save login time in Realtime Database
-      if (authService.userId != null) {
-        await realtimeService.setUserOnline(
-          authService.userId!,
-          authService.currentUser?.displayName ?? 'Anonymous',
-        );
-      }
+      // Presence updates are handled inside AuthService with short timeouts
 
       if (mounted) {
+        _isLoading = false;
         Navigator.of(context).pushReplacementNamed('/home');
       }
     } on Exception catch (e) {

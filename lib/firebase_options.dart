@@ -37,7 +37,8 @@ class DefaultFirebaseOptions {
     messagingSenderId: '596962191852',
     projectId: 'chat-final-69345',
     authDomain: 'chat-final-69345.firebaseapp.com',
-    databaseURL: 'https://chat-final-69345.firebaseio.com',
+    // Use the default Realtime Database URL format for web
+    databaseURL: 'https://chat-final-69345-default-rtdb.firebaseio.com',
     storageBucket: 'chat-final-69345.firebasestorage.app',
   );
 

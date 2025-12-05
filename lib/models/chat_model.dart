@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 class ChatModel {
   final String id;
   final String name;
@@ -9,6 +10,7 @@ class ChatModel {
   final String lastMessage;
   final DateTime lastMessageTime;
   final bool isPrivate;
+  final Map<String, String>? memberDisplayNames;
 
   ChatModel({
     required this.id,
@@ -21,6 +23,7 @@ class ChatModel {
     required this.lastMessage,
     required this.lastMessageTime,
     required this.isPrivate,
+    this.memberDisplayNames,
   });
 
   Map<String, dynamic> toMap() {
@@ -35,10 +38,21 @@ class ChatModel {
       'lastMessage': lastMessage,
       'lastMessageTime': lastMessageTime.toIso8601String(),
       'isPrivate': isPrivate,
+      'memberDisplayNames': memberDisplayNames,
     };
   }
 
   factory ChatModel.fromMap(Map<String, dynamic> map) {
+    DateTime parseDate(dynamic v) {
+      if (v == null) return DateTime.now();
+      try {
+        if (v is String) return DateTime.parse(v);
+        // Support Firestore Timestamp
+        if (v is Timestamp) return v.toDate();
+      } catch (_) {}
+      return DateTime.now();
+    }
+
     return ChatModel(
       id: map['id'] ?? '',
       name: map['name'] ?? '',
@@ -46,10 +60,13 @@ class ChatModel {
       photoUrl: map['photoUrl'],
       members: List<String>.from(map['members'] ?? []),
       createdBy: map['createdBy'] ?? '',
-      createdAt: DateTime.parse(map['createdAt'] ?? DateTime.now().toIso8601String()),
+      createdAt: parseDate(map['createdAt']),
       lastMessage: map['lastMessage'] ?? '',
-      lastMessageTime: DateTime.parse(map['lastMessageTime'] ?? DateTime.now().toIso8601String()),
+      lastMessageTime: parseDate(map['lastMessageTime']),
       isPrivate: map['isPrivate'] ?? false,
+      memberDisplayNames: (map['memberDisplayNames'] is Map)
+          ? Map<String, String>.from(map['memberDisplayNames'])
+          : null,
     );
   }
 
@@ -64,6 +81,7 @@ class ChatModel {
     String? lastMessage,
     DateTime? lastMessageTime,
     bool? isPrivate,
+    Map<String, String>? memberDisplayNames,
   }) {
     return ChatModel(
       id: id ?? this.id,
@@ -76,6 +94,7 @@ class ChatModel {
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
       isPrivate: isPrivate ?? this.isPrivate,
+      memberDisplayNames: memberDisplayNames ?? this.memberDisplayNames,
     );
   }
 }

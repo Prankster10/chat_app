@@ -9,12 +9,21 @@ class RealtimeDatabaseService {
   // Reference to presence node
   DatabaseReference get presenceRef => _database.ref('presence');
 
-  // Set user online status
+  // Set user online status (with onDisconnect to mark offline)
   Future<void> setUserOnline(String userId, String displayName) async {
     try {
-      await presenceRef.child(userId).set({
+      final ref = presenceRef.child(userId);
+      // Ensure onDisconnect marks user offline and updates lastSeen
+      try {
+        await ref.onDisconnect().update({
+          'online': false,
+          'lastSeen': ServerValue.timestamp,
+        });
+      } catch (_) {}
+
+      await ref.update({
         'online': true,
-        'lastSeen': DateTime.now().toIso8601String(),
+        'lastSeen': ServerValue.timestamp,
         'displayName': displayName,
       });
     } catch (e) {
@@ -26,9 +35,9 @@ class RealtimeDatabaseService {
   // Set user offline status
   Future<void> setUserOffline(String userId) async {
     try {
-      await presenceRef.child(userId).set({
+      await presenceRef.child(userId).update({
         'online': false,
-        'lastSeen': DateTime.now().toIso8601String(),
+        'lastSeen': ServerValue.timestamp,
       });
     } catch (e) {
       print('Error setting user offline: $e');
@@ -86,7 +95,7 @@ class RealtimeDatabaseService {
   Future<void> updateLastSeen(String userId) async {
     try {
       await presenceRef.child(userId).update({
-        'lastSeen': DateTime.now().toIso8601String(),
+        'lastSeen': ServerValue.timestamp,
       });
     } catch (e) {
       print('Error updating last seen: $e');
@@ -96,6 +105,7 @@ class RealtimeDatabaseService {
 
   // Get all users
   Stream<DatabaseEvent> getAllUsersStream() {
-    return usersRef.onValue;
+    // Prefer presence for live online/offline states with displayName
+    return presenceRef.onValue;
   }
 }

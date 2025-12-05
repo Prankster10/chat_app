@@ -59,7 +59,6 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
     try {
       final authService = context.read<AuthService>();
-      final realtimeService = context.read<RealtimeDatabaseService>();
 
       final result = await authService.registerWithEmailPassword(
         email: _emailController.text.trim(),
@@ -75,17 +74,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       final user = result['user'] as AppUser;
       final userId = user.uid;
 
-      // Save user to Realtime Database
-      try {
-        await realtimeService.saveUserProfile(
-          userId: userId,
-          email: _emailController.text.trim(),
-          displayName: _displayNameController.text,
-        );
-      } catch (e) {
-        print('Realtime DB save error: $e');
-        // Continue anyway - Realtime DB is optional
-      }
+      // Realtime DB writes are handled in AuthService with timeouts; avoid duplicating here
 
       if (mounted) {
         setState(() {

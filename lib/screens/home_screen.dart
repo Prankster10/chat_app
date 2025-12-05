@@ -57,12 +57,15 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           TextButton(
             onPressed: () async {
-              if (_authService.userId != null) {
-                await _realtimeService.setUserOffline(_authService.userId!);
-              }
+              // Close the dialog first to avoid overlay issues
+              Navigator.of(context, rootNavigator: true).pop();
+
+              // AuthService handles presence update non-blocking
               await _authService.logout();
+
               if (mounted) {
-                Navigator.of(context).pushReplacementNamed('/login');
+                // Clear navigation stack and go to login
+                Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
               }
             },
             child: const Text('Logout'),
@@ -119,11 +122,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildChatsTab() {
+    final uid = _authService.userId;
+    if (uid == null) {
+      return const Center(child: Text('Not authenticated'));
+    }
     return StreamBuilder(
-      stream: _firestoreService.getUserChatsStream(_authService.userId!),
+      stream: _firestoreService.getUserChatsStream(uid),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return Center(child: Text('Error loading chats: ${snapshot.error}'));
         }
 
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
@@ -132,7 +143,8 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
 
-        final chats = snapshot.data!.docs
+        final docs = snapshot.data!.docs;
+        final chats = docs
             .map((doc) => ChatModel.fromMap(doc.data() as Map<String, dynamic>))
             .toList();
 
@@ -142,11 +154,13 @@ class _HomeScreenState extends State<HomeScreen> {
             final chat = chats[index];
             return ListTile(
               title: Text(chat.name),
+              // If private, show other participant's name using memberDisplayNames
               subtitle: Text(
                 chat.lastMessage,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
+              leading: CircleAvatar(child: Text(_chatTitleForViewer(chat).substring(0,1).toUpperCase())),
               trailing: Text(
                 _formatTime(chat.lastMessageTime),
                 style: const TextStyle(fontSize: 12),
@@ -156,8 +170,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   context,
                   MaterialPageRoute(
                     builder: (context) => ChatScreen(
-                      chatId: snapshot.data!.docs[index].id,
-                      chatName: chat.name,
+                      chatId: docs[index].id,
+                      chatName: _chatTitleForViewer(chat),
                     ),
                   ),
                 );
@@ -170,70 +184,77 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildUsersTab() {
+    // Outer stream: Firestore users
     return StreamBuilder(
-      stream: _realtimeService.getAllUsersStream(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+      stream: _firestoreService.getAllUsersStream(),
+      builder: (context, usersSnap) {
+        if (usersSnap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-
-        if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
+        if (usersSnap.hasError) {
+          return Center(child: Text('Error loading users: ${usersSnap.error}'));
+        }
+        if (!usersSnap.hasData || usersSnap.data!.docs.isEmpty) {
           return const Center(child: Text('No users found'));
         }
 
-        final usersMap = snapshot.data!.snapshot.value as Map<dynamic, dynamic>;
-        final users = usersMap.entries
-            .where((entry) => entry.key != _authService.userId)
-            .toList();
+        final userDocs = usersSnap.data!.docs.where((d) => d.id != _authService.userId).toList();
 
-        return ListView.builder(
-          itemCount: users.length,
-          itemBuilder: (context, index) {
-            final user = users[index];
-            final userData =
-                (user.value as Map<dynamic, dynamic>?) ?? {};
-            final isOnline = userData['online'] ?? false;
+        // Inner stream: Realtime Database presence
+        return StreamBuilder(
+          stream: _realtimeService.getAllUsersPresenceStream(),
+          builder: (context, presenceSnap) {
+            Map<dynamic, dynamic> presenceMap = {};
+            if (presenceSnap.hasData && presenceSnap.data!.snapshot.value is Map) {
+              presenceMap = presenceSnap.data!.snapshot.value as Map<dynamic, dynamic>;
+            }
 
-            return ListTile(
-              title: Text(userData['displayName'] ?? 'Unknown'),
-              subtitle: Text(
-                isOnline ? 'Online' : 'Offline',
-                style: TextStyle(
-                  color: isOnline ? Colors.green : Colors.grey,
-                ),
-              ),
-              leading: CircleAvatar(
-                backgroundColor: isOnline ? Colors.green : Colors.grey,
-                child: const Icon(Icons.person, color: Colors.white),
-              ),
-              onTap: () async {
-                // Create private chat
-                try {
-                  final chatId =
-                      await _firestoreService.createPrivateChatTransaction(
-                    user1Id: _authService.userId!,
-                    user2Id: user.key,
-                    user1Name:
-                        _authService.currentUser?.displayName ?? 'Anonymous',
-                    user2Name: userData['displayName'] ?? 'Unknown',
-                  );
+            return ListView.builder(
+              itemCount: userDocs.length,
+              itemBuilder: (context, index) {
+                final userDoc = userDocs[index];
+                final userData = userDoc.data() as Map<String, dynamic>? ?? {};
+                final presenceData = presenceMap[userDoc.id] as Map<dynamic, dynamic>?;
+                final isOnline = (presenceData != null && (presenceData['online'] == true));
+                final displayName = userData['displayName'] ?? presenceData?['displayName'] ?? 'Unknown';
 
-                  if (mounted) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ChatScreen(
-                          chatId: chatId,
-                          chatName: userData['displayName'] ?? 'Unknown',
-                        ),
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error: $e')),
-                  );
-                }
+                return ListTile(
+                  title: Text(displayName),
+                  subtitle: Text(
+                    isOnline ? 'Online' : 'Offline',
+                    style: TextStyle(color: isOnline ? Colors.green : Colors.grey),
+                  ),
+                  leading: CircleAvatar(
+                    backgroundColor: isOnline ? Colors.green : Colors.grey,
+                    child: const Icon(Icons.person, color: Colors.white),
+                  ),
+                  onTap: () async {
+                    try {
+                      final chatId = await _firestoreService.createPrivateChatTransaction(
+                        user1Id: _authService.userId!,
+                        user2Id: userDoc.id,
+                        user1Name: _authService.currentUser?.displayName ?? 'Anonymous',
+                        user2Name: displayName,
+                      );
+
+                      if (mounted) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ChatScreen(
+                              chatId: chatId,
+                              chatName: displayName,
+                            ),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Error: $e')),
+                      );
+                    }
+                  },
+                );
               },
             );
           },
@@ -253,6 +274,14 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
     }
+  }
+
+  String _chatTitleForViewer(ChatModel chat) {
+    if (!chat.isPrivate) return chat.name.isNotEmpty ? chat.name : 'Group Chat';
+    final uid = _authService.userId;
+    if (uid == null) return chat.name;
+    final map = chat.memberDisplayNames ?? {};
+    return map[uid] ?? chat.name;
   }
 }
 

@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 class MessageModel {
   final String id;
   final String senderUid;
@@ -23,6 +24,7 @@ class MessageModel {
       'senderUid': senderUid,
       'senderName': senderName,
       'content': content,
+      // timestamp will be overwritten with serverTimestamp on write
       'timestamp': timestamp.toIso8601String(),
       'imageUrl': imageUrl,
       'readBy': readBy ?? [],
@@ -30,12 +32,21 @@ class MessageModel {
   }
 
   factory MessageModel.fromMap(Map<String, dynamic> map) {
+    DateTime parseDate(dynamic v) {
+      if (v == null) return DateTime.now();
+      try {
+        if (v is String) return DateTime.parse(v);
+        if (v is Timestamp) return v.toDate();
+      } catch (_) {}
+      return DateTime.now();
+    }
+
     return MessageModel(
       id: map['id'] ?? '',
       senderUid: map['senderUid'] ?? '',
       senderName: map['senderName'] ?? '',
       content: map['content'] ?? '',
-      timestamp: DateTime.parse(map['timestamp'] ?? DateTime.now().toIso8601String()),
+      timestamp: parseDate(map['timestamp']),
       imageUrl: map['imageUrl'],
       readBy: List<String>.from(map['readBy'] ?? []),
     );
